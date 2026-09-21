@@ -6,6 +6,12 @@ const axios = require('axios');
 const ChatwootClient = require('./chatwootClient');
 const BubblClient = require('./bubblClient');
 const store = require('./store');
+const {
+  validateBubblWebhookPayload,
+  validateChatwootWebhookPayload,
+  validateOutgoingText,
+  validateMediaForUpload,
+} = require('./validation');
 
 const {
   PORT = 8787,
@@ -65,6 +71,17 @@ app.use(express.json({
   },
 }));
 
+// A body that isn't valid JSON (or isn't a top-level object/array - body-parser's strict
+// mode) throws before any route handler runs. Handle it here instead of letting Express's
+// default error handler log a full stack trace for what's just bad input.
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.parse.failed' || err instanceof SyntaxError) {
+    console.error(`[${req.path}] rejecting request with invalid JSON body:`, err.message);
+    return res.sendStatus(400);
+  }
+  next(err);
+});
+
 app.get('/', (_req, res) => res.json({ ok: true, service: 'chatwoot-bubbl-bridge' }));
 
 function checkToken(req, res) {
@@ -122,6 +139,12 @@ app.post('/from-bubbl/:token', async (req, res) => {
   if (!verifyBubblSignature(req)) {
     console.error('[from-bubbl] signature verification failed, rejecting');
     return res.sendStatus(401);
+  }
+
+  const validation = validateBubblWebhookPayload(req.body);
+  if (!validation.ok) {
+    console.error('[from-bubbl] rejecting malformed payload:', validation.reason);
+    return res.sendStatus(400);
   }
 
   console.log('[from-bubbl] payload:', JSON.stringify(req.body));
@@ -247,6 +270,12 @@ async function ensureChatwootConversation(externalUserId) {
 app.post('/from-chatwoot/:token', (req, res) => {
   if (!checkToken(req, res)) return;
 
+  const validation = validateChatwootWebhookPayload(req.body);
+  if (!validation.ok) {
+    console.error('[from-chatwoot] rejecting malformed payload:', validation.reason);
+    return res.sendStatus(400);
+  }
+
   console.log('[from-chatwoot] raw payload:', JSON.stringify(req.body));
   res.sendStatus(200);
 
@@ -304,6 +333,11 @@ async function handleChatwootPayload(payload) {
 
   if (!attachments.length) {
     if (content) {
+      const textCheck = validateOutgoingText(content);
+      if (!textCheck.ok) {
+        console.error('[from-chatwoot] not sending - ', textCheck.reason);
+        return;
+      }
       const result = await bubbl.sendText(externalUserId, content);
       recordMessageMapping(result, conversationId, chatwootMessageId);
     }
@@ -317,6 +351,12 @@ async function handleChatwootPayload(payload) {
     const { buffer, contentType } = await downloadUrl(dataUrl);
     const type = mapChatwootFileType(attachment.file_type, contentType);
     const filename = dataUrl.split('/').pop()?.split('?')[0] || `attachment-${index}`;
+
+    const mediaCheck = validateMediaForUpload(type, buffer, contentType);
+    if (!mediaCheck.ok) {
+      console.error(`[from-chatwoot] skipping attachment ${index} - ${mediaCheck.reason}`);
+      continue;
+    }
 
     const mediaId = await bubbl.uploadMedia(buffer, filename, contentType);
     const result = await bubbl.sendMedia(externalUserId, type, mediaId, index === 0 ? content : null);
