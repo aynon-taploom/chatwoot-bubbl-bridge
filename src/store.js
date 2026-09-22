@@ -34,9 +34,20 @@ function byChatwootConversationId(conversationId) {
   return entry?.[0] || null;
 }
 
-function put(externalUserId, chatwootContactIdentifier, chatwootConversationId) {
+function put(externalUserId, chatwootContactIdentifier, chatwootConversationId, displayName) {
   const conversations = readJsonFile(CONVERSATIONS_FILE);
-  conversations[externalUserId] = { chatwootContactIdentifier, chatwootConversationId };
+  conversations[externalUserId] = { chatwootContactIdentifier, chatwootConversationId, displayName };
+  writeJsonFile(CONVERSATIONS_FILE, conversations);
+}
+
+// Called when a later message carries a display name that differs from what's on file (bubbl's
+// own display_name is mutable - see relayFromBubbl.js) - keeps the Chatwoot contact's name in
+// sync without a PATCH on every single message.
+function updateDisplayName(externalUserId, displayName) {
+  const conversations = readJsonFile(CONVERSATIONS_FILE);
+  const entry = conversations[externalUserId];
+  if (!entry) return;
+  conversations[externalUserId] = { ...entry, displayName };
   writeJsonFile(CONVERSATIONS_FILE, conversations);
 }
 
@@ -60,6 +71,7 @@ module.exports = {
   byExternalUserId,
   byChatwootConversationId,
   put,
+  updateDisplayName,
   putMessageMapping,
   messageMappingByBubblId,
 };

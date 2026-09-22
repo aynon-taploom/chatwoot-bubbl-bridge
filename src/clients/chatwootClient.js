@@ -19,6 +19,19 @@ class ChatwootClient {
     return data.source_id;
   }
 
+  /**
+   * Updates a contact's name - called when a later inbound message carries a display name
+   * that differs from what Chatwoot has on file (bubbl's own display_name is mutable). Same
+   * public Client API surface as createContact, just PATCH on the single-contact URL instead
+   * of POST on the collection.
+   */
+  async updateContact(contactIdentifier, name) {
+    await axios.patch(
+      `${this.baseUrl}/public/api/v1/inboxes/${this.inboxIdentifier}/contacts/${contactIdentifier}`,
+      { name }
+    );
+  }
+
   async createConversation(contactIdentifier) {
     const { data } = await axios.post(
       `${this.baseUrl}/public/api/v1/inboxes/${this.inboxIdentifier}/contacts/${contactIdentifier}/conversations`,

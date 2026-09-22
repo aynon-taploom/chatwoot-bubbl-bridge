@@ -27,19 +27,25 @@ function extensionForMimeType(mimeType) {
  * keeps this module free of module-level singletons, so it's easy to test with fakes).
  */
 function createBubblRelay({ bubbl, chatwoot, store }) {
-  async function ensureChatwootConversation(externalUserId) {
+  async function ensureChatwootConversation(externalUserId, displayName) {
     const existing = store.byExternalUserId(externalUserId);
-    if (existing) return existing;
+    if (existing) {
+      if (displayName && displayName !== existing.displayName) {
+        await chatwoot.updateContact(existing.chatwootContactIdentifier, displayName);
+        store.updateDisplayName(externalUserId, displayName);
+      }
+      return existing;
+    }
 
-    const contactIdentifier = await chatwoot.createContact(externalUserId, externalUserId);
+    const contactIdentifier = await chatwoot.createContact(externalUserId, displayName);
     const conversationId = await chatwoot.createConversation(contactIdentifier);
-    store.put(externalUserId, contactIdentifier, conversationId);
+    store.put(externalUserId, contactIdentifier, conversationId, displayName);
 
     return { chatwootContactIdentifier: contactIdentifier, chatwootConversationId: conversationId };
   }
 
-  async function relayMessage(externalUserId, message) {
-    const conversation = await ensureChatwootConversation(externalUserId);
+  async function relayMessage(externalUserId, displayName, message) {
+    const conversation = await ensureChatwootConversation(externalUserId, displayName);
 
     if (message.type === 'text') {
       await chatwoot.createMessage(
@@ -115,8 +121,13 @@ function createBubblRelay({ bubbl, chatwoot, store }) {
       return;
     }
 
+    // bubbl always sends profile.name (falling back to the raw external_user_id itself when
+    // the consumer hasn't set one) - see MessagePayloadBuilder::contactObject() on the bubbl
+    // side. Still guarded here in case an older subscription/payload predates that field.
+    const displayName = value?.contacts?.[0]?.profile?.name;
+
     for (const message of value.messages || []) {
-      await relayMessage(externalUserId, message);
+      await relayMessage(externalUserId, displayName, message);
     }
   }
 
